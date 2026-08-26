@@ -1,7 +1,7 @@
 import os
 import threading
 import time
-from typing import Optional, Tuple
+from typing import Optional
 import cv2
 import numpy as np
 from app.core.config import settings
@@ -16,6 +16,7 @@ class StreamReaderWorker:
         self.thread: Optional[threading.Thread] = None
         self.cap: Optional[cv2.VideoCapture] = None
         self.synthetic_frame_counter: int = 0
+        self._reconnect_requested: bool = False
 
     def start(self):
         if not self.running:
@@ -33,16 +34,29 @@ class StreamReaderWorker:
             self.thread.join(timeout=2.0)
         logger.info("Stream reader worker stopped.")
 
+    def switch_stream(self, new_url: str, stream_name: str) -> None:
+        """Dynamically switches stream source on the fly without restarting server."""
+        logger.info(f"Switching stream source to: {stream_name} ({new_url})")
+        global_state.set_active_stream(new_url, stream_name)
+        self._reconnect_requested = True
+
     def _get_capture_source(self) -> Optional[cv2.VideoCapture]:
+        active_stream = global_state.get_active_stream()
+        stream_url = active_stream["url"]
+
+        if stream_url.startswith("synthetic://"):
+            logger.info("Synthetic traffic simulation selected as active stream.")
+            return None
+
         try:
-            logger.info(f"Connecting to primary stream: {settings.VIDEO_STREAM_URL}")
-            cap = cv2.VideoCapture(settings.VIDEO_STREAM_URL)
+            logger.info(f"Connecting to stream: {stream_url}")
+            cap = cv2.VideoCapture(stream_url)
             if cap.isOpened():
                 return cap
         except Exception as e:
-            logger.warning(f"Error opening primary stream: {e}")
+            logger.warning(f"Error opening stream {stream_url}: {e}")
 
-        # Fallback local video paths
+        # Fallback local video paths if remote fails
         candidates = [
             settings.FALLBACK_VIDEO_PATH,
             os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "sample_data", "synthetic_traffic.mp4"),
@@ -101,6 +115,15 @@ class StreamReaderWorker:
         while self.running:
             loop_start = time.time()
             frame = None
+
+            # Handle dynamic stream switch request
+            if self._reconnect_requested:
+                if self.cap is not None:
+                    self.cap.release()
+                    self.cap = None
+                self.cap = self._get_capture_source()
+                self._reconnect_requested = False
+                consecutive_failures = 0
 
             if self.cap is not None and self.cap.isOpened():
                 ret, captured_frame = self.cap.read()

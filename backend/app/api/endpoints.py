@@ -1,4 +1,4 @@
-from typing import List, Tuple
+from typing import List, Tuple, Dict, Any, Optional
 from pydantic import BaseModel, field_validator
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
@@ -24,13 +24,39 @@ class ROIModel(BaseModel):
                 raise ValueError(f"Point at index {idx} in '{info.field_name}' with coordinates {pt} is outside normalized range [0.0, 1.0].")
         return v
 
+class StreamSourceModel(BaseModel):
+    url: str
+    name: Optional[str] = "Custom Stream"
+
 @router.get("/health")
 async def health_check():
     is_active, fps = global_state.get_stream_status()
+    active_stream = global_state.get_active_stream()
     return {
         "status": "ok",
         "stream_active": is_active,
-        "fps": fps
+        "fps": fps,
+        "active_stream": active_stream
+    }
+
+@router.get("/stream-source")
+async def get_stream_source():
+    return {
+        "active_source": global_state.get_active_stream(),
+        "presets": global_state.get_cctv_presets()
+    }
+
+@router.post("/stream-source")
+async def switch_stream_source(source_data: StreamSourceModel):
+    from app.main import stream_worker
+    stream_name = source_data.name if source_data.name else "Custom CCTV Stream"
+    stream_worker.switch_stream(source_data.url, stream_name)
+    # Reset counters on camera switch
+    global_state.reset_counters()
+    return {
+        "status": "success",
+        "message": f"Switched stream source to '{stream_name}'",
+        "active_source": global_state.get_active_stream()
     }
 
 @router.get("/roi", response_model=ROIModel)

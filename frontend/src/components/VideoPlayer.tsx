@@ -1,26 +1,30 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Camera, Radio, RefreshCw, Layers, Trash2 } from 'lucide-react';
+import { Camera, Radio, RefreshCw, Layers, Trash2, Video } from 'lucide-react';
 import CanvasROI from './CanvasROI';
 import { ROICoordinates } from '@/types';
 
 interface VideoPlayerProps {
   streamUrl: string;
   fps: number;
+  cameraName: string;
   isConnected: boolean;
   roi: ROICoordinates;
   onSaveROI: (roi: ROICoordinates) => void;
   onResetCounters: () => void;
+  onOpenStreamModal: () => void;
 }
 
 export default function VideoPlayer({
   streamUrl,
   fps,
+  cameraName,
   isConnected,
   roi,
   onSaveROI,
   onResetCounters,
+  onOpenStreamModal,
 }: VideoPlayerProps) {
   const [editMode, setEditMode] = useState<'inbound' | 'outbound' | 'view'>('view');
 
@@ -37,14 +41,14 @@ export default function VideoPlayer({
   return (
     <div className="glass-panel rounded-2xl overflow-hidden flex flex-col border border-slate-800 shadow-2xl">
       {/* Stream Header */}
-      <div className="px-5 py-3.5 bg-slate-900/90 border-b border-slate-800 flex items-center justify-between">
+      <div className="px-5 py-3.5 bg-slate-900/90 border-b border-slate-800 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center space-x-3">
           <div className="p-2 rounded-lg bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
             <Camera className="w-5 h-5" />
           </div>
           <div>
             <h2 className="text-sm font-semibold text-slate-100 flex items-center gap-2">
-              ATCS Surakarta Balai Kota (FLV)
+              {cameraName}
               <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-950 text-emerald-400 border border-emerald-800/60">
                 <Radio className="w-3 h-3 mr-1 animate-pulse" /> LIVE
               </span>
@@ -53,16 +57,22 @@ export default function VideoPlayer({
           </div>
         </div>
 
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
           <div className="text-right">
             <div className="text-xs text-slate-400">Stream Rate</div>
             <div className="text-xs font-mono font-bold text-slate-200">{fps.toFixed(1)} FPS</div>
           </div>
           <button
+            onClick={onOpenStreamModal}
+            className="px-3 py-1.5 bg-emerald-600/20 hover:bg-emerald-600/30 text-emerald-300 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 border border-emerald-500/30"
+          >
+            <Video className="w-3.5 h-3.5" /> Ganti CCTV / URL
+          </button>
+          <button
             onClick={onResetCounters}
             className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium rounded-lg transition-colors flex items-center gap-1.5 border border-slate-700"
           >
-            <RefreshCw className="w-3.5 h-3.5" /> Reset Counters
+            <RefreshCw className="w-3.5 h-3.5" /> Reset
           </button>
         </div>
       </div>

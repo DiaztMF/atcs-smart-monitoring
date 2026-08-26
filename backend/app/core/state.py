@@ -16,6 +16,10 @@ class GlobalStateManager:
         self._is_stream_active: bool = False
         self._current_fps: float = 0.0
         
+        # Active stream details
+        self._active_stream_url: str = settings.VIDEO_STREAM_URL
+        self._active_stream_name: str = "ATCS Surakarta — Simpang Balai Kota"
+        
         # Load ROI from persistent JSON file or fallback
         self._roi_inbound: List[Tuple[float, float]] = []
         self._roi_outbound: List[Tuple[float, float]] = []
@@ -73,6 +77,21 @@ class GlobalStateManager:
             },
             "recent_events": []
         }
+
+    def set_active_stream(self, url: str, name: str) -> None:
+        with self._lock:
+            self._active_stream_url = url
+            self._active_stream_name = name
+
+    def get_active_stream(self) -> Dict[str, str]:
+        with self._lock:
+            return {
+                "name": self._active_stream_name,
+                "url": self._active_stream_url
+            }
+
+    def get_cctv_presets(self) -> List[Dict[str, str]]:
+        return settings.CCTV_PRESETS
 
     def set_raw_frame(self, frame: np.ndarray) -> None:
         with self._lock:

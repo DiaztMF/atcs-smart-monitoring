@@ -11,6 +11,25 @@ def test_health_endpoint():
     data = response.json()
     assert "status" in data
     assert data["status"] == "ok"
+    assert "active_stream" in data
+
+def test_stream_source_endpoints():
+    get_res = client.get("/api/v1/stream-source")
+    assert get_res.status_code == 200
+    data = get_res.json()
+    assert "active_source" in data
+    assert "presets" in data
+    assert len(data["presets"]) >= 4
+
+    # Test switching stream source
+    post_res = client.post("/api/v1/stream-source", json={
+        "url": "http://example.com/cctv_test.flv",
+        "name": "Test CCTV Cam 1"
+    })
+    assert post_res.status_code == 200
+    post_data = post_res.json()
+    assert post_data["status"] == "success"
+    assert global_state.get_active_stream()["name"] == "Test CCTV Cam 1"
 
 def test_roi_get_and_post_valid():
     new_roi = {
@@ -27,16 +46,14 @@ def test_roi_get_and_post_valid():
     assert res_data["outbound"] == new_roi["outbound"]
 
 def test_roi_post_validation_error_fewer_than_3_points():
-    # Attempt to post a polygon with only 2 points (invalid contour)
     invalid_roi = {
         "inbound": [[0.1, 0.2], [0.3, 0.2]],
         "outbound": []
     }
     post_res = client.post("/api/v1/roi", json=invalid_roi)
-    assert post_res.status_code == 422 # Unprocessable Entity validation error
+    assert post_res.status_code == 422
 
 def test_roi_post_validation_error_out_of_bounds():
-    # Attempt to post a point with coordinate > 1.0
     invalid_roi = {
         "inbound": [[0.1, 0.2], [0.3, 0.2], [1.5, 0.8]],
         "outbound": []

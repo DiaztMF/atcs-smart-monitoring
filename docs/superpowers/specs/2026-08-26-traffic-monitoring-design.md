@@ -1,8 +1,8 @@
 # Design Document: Sistem Monitoring dan Penghitung Beban Lalu Lintas Real-Time Berbasis Computer Vision
 
 **Tanggal:** 2026-08-26  
-**Status:** Approved by User  
-**Tujuan:** Mengukur beban jalan dua arah berstandar Satuan Mobil Penumpang (SMP) secara real-time dari video stream CCTV publik (FLV) sebagai fondasi kontrol lampu lalu lintas adaptif 4 arah, berjalan 100% pada ekosistem free-tier (FastAPI + YOLOv11 + ByteTrack + Next.js).
+**Status:** Approved & Enhanced  
+**Tujuan:** Mengukur beban jalan dua arah berstandar Satuan Mobil Penumpang (SMP) secara real-time dari video stream CCTV publik (FLV/HLS/MP4/RTSP) sebagai fondasi kontrol lampu lalu lintas adaptif 4 arah, berjalan 100% pada ekosistem free-tier (FastAPI + YOLOv11 + ByteTrack + Next.js), dilengkapi fitur **Dynamic CCTV Switcher & Preset Selector**.
 
 ---
 
@@ -15,7 +15,7 @@
 |                                                                                         |
 |  +--------------------+      +--------------------+      +---------------------------+  |
 |  |   Stream Reader    | ---> |  Detection Engine  | ---> |   Spatial ROI Tracker     |  |
-|  | (FLV/Fallback Vid) |      | (YOLO11n+ByteTrack)|      | (Bottom-Center & PKJI SMP)|  |
+|  | (Dynamic FLV/RTSP) |      | (YOLO11n+ByteTrack)|      | (Bottom-Center & PKJI SMP)|  |
 |  +--------------------+      +--------------------+      +---------------------------+  |
 |            |                           |                               |                |
 |            +---------------------------+-------------------------------+                |
@@ -44,6 +44,10 @@
 |                    |   Real-Time Traffic Dashboard (SMP)    |                           |
 |                    |  (Charts, Metrics Cards, Live Activity)|                           |
 |                    +----------------------------------------+                           |
+|                                        |                                                |
+|                    +----------------------------------------+                           |
+|                    | Dynamic CCTV Switcher & Preset Selector|                           |
+|                    +----------------------------------------+                           |
 +-----------------------------------------------------------------------------------------+
 ```
 
@@ -54,36 +58,37 @@ Smart-Monitoring/
 │   ├── app/
 │   │   ├── api/
 │   │   │   ├── __init__.py
-│   │   │   ├── endpoints.py       # REST API: CRUD ROI (/api/v1/roi), status, reset counter
+│   │   │   ├── endpoints.py       # REST API: CRUD ROI (/api/v1/roi), stream source switcher, status
 │   │   │   └── websocket.py       # WebSocket broadcaster metrik statistik (/ws/metrics)
 │   │   ├── core/
 │   │   │   ├── __init__.py
-│   │   │   ├── config.py          # App settings (Pydantic Settings, CORS, Stream URLs)
-│   │   │   ├── state.py           # Thread-safe global state & buffer manager
+│   │   │   ├── config.py          # App settings (Pydantic Settings, CORS, CCTV Presets)
+│   │   │   ├── state.py           # Thread-safe global state & pre-encoded JPEG buffer
 │   │   │   └── logging.py         # Structured logging configuration
 │   │   ├── services/
 │   │   │   ├── __init__.py
-│   │   │   ├── stream_reader.py   # Background worker pembaca FLV stream / fallback video
+│   │   │   ├── stream_reader.py   # Background worker pembaca dynamic FLV stream / fallback video
 │   │   │   ├── detector.py        # Pipeline YOLOv11n + ByteTrack persistent tracker
-│   │   │   ├── roi_tracker.py     # Logika spasial poligon, Bottom-Center raycast, hitung SMP
+│   │   │   ├── roi_tracker.py     # Logika spasial poligon, Bottom-Center raycast, 60s rolling window SMP
 │   │   │   └── mjpeg_stream.py    # Generator multipart/x-mixed-replace JPEG frames
-│   │   └── main.py                # Entrypoint FastAPI & lifecycle manager
-│   ├── sample_data/               # Sample video clip untuk offline/fallback demo
-│   ├── requirements.txt           # fastapi, uvicorn, ultralytics, opencv-python-headless, etc.
-│   └── Dockerfile                 # Hugging Face Spaces CPU optimized Dockerfile
+│   │   └── main.py                # Entrypoint FastAPI & root status / healthz handler
+│   ├── sample_data/               # Sample video clip generator untuk offline demo
+│   ├── requirements.txt           # fastapi, uvicorn, ultralytics, lapx, opencv-python-headless, etc.
+│   └── default_roi.json           # Persistent default ROI coordinates
 ├── frontend/
 │   ├── src/
 │   │   ├── components/
 │   │   │   ├── CanvasROI.tsx      # Canvas overlay untuk penentuan poligon Inbound/Outbound
-│   │   │   ├── VideoPlayer.tsx    # Komponen render stream MJPEG + HUD status
-│   │   │   ├── MetricsCard.tsx    # Card metrik SMP, density level, dan laju kendaraan/jam
+│   │   │   ├── VideoPlayer.tsx    # Komponen render stream MJPEG + HUD status & switcher button
+│   │   │   ├── CCTVSelectorModal.tsx # Dialog pemilihan preset CCTV & input URL custom
+│   │   │   ├── MetricsCard.tsx    # Card metrik SMP, density level, dan laju kendaraan/menit
 │   │   │   ├── VehicleBreakdown.tsx # Breakdown jumlah kendaraan (Motor, Mobil, Bus, Truk)
 │   │   │   ├── TrafficChart.tsx   # Grafik histori laju beban SMP real-time (Recharts)
 │   │   │   └── LiveFeed.tsx       # Real-time event log kendaraan yang terhitung
 │   │   ├── hooks/
 │   │   │   └── useWebSocket.ts    # Custom hook pengelola koneksi WebSocket & auto-reconnect
 │   │   ├── types/
-│   │   │   └── index.ts           # Definisi TypeScript interface (Metrics, ROI, VehicleEvent)
+│   │   │   └── index.ts           # Definisi TypeScript interface (Metrics, ROI, StreamSource)
 │   │   └── app/
 │   │       ├── globals.css        # Tailwind CSS styling
 │   │       ├── layout.tsx         # Root layout
@@ -109,7 +114,7 @@ Smart-Monitoring/
   * Kelas ID 2: `car`
   * Kelas ID 5: `bus`
   * Kelas ID 7: `truck`
-* **Object Tracking:** ByteTrack (`track(source=..., persist=True, tracker="bytetrack.yaml")`).
+* **Object Tracking:** ByteTrack (`track(source=..., persist=True, tracker="bytetrack.yaml")`) dengan dependency `lapx`.
 
 ### 2.2 Geometri Spasial & Titik Kontak Roda (Bottom-Center)
 * Titik evaluasi kontak aspal kendaraan dihitung dari koordinat bounding box:
@@ -125,28 +130,20 @@ Smart-Monitoring/
   * Mobil Penumpang (`car`) = **1.0 SMP**
   * Bus (`bus`) = **1.3 SMP**
   * Truk (`truck`) = **1.3 SMP**
-* **Formula Perhitungan:**
-  $$\text{SMP}_{\text{inbound}} = \sum (N_{\text{motor, in}} \times 0.5) + (N_{\text{mobil, in}} \times 1.0) + (N_{\text{bus, in}} \times 1.3) + (N_{\text{truk, in}} \times 1.3)$$
-  $$\text{SMP}_{\text{outbound}} = \sum (N_{\text{motor, out}} \times 0.5) + (N_{\text{mobil, out}} \times 1.0) + (N_{\text{bus, out}} \times 1.3) + (N_{\text{truk, out}} \times 1.3)$$
+* **Rolling Window 60-Detik (`collections.deque`):**
+  Metrik `smp_per_minute` dihitung secara dinamis dari jumlah akumulasi SMP kendaraan yang melintasi poligon dalam 60 detik terakhir.
 * **Klasifikasi Tingkat Kepadatan (*Density Level*):**
   * $\text{SMP/menit} < 10 \implies$ **LANCAR (Smooth - Green)**
   * $10 \le \text{SMP/menit} < 25 \implies$ **SEDANG (Moderate - Yellow)**
   * $25 \le \text{SMP/menit} < 40 \implies$ **PADAT (Dense - Orange)**
   * $\text{SMP/menit} \ge 40 \implies$ **MACET (Congested - Red)**
 
-### 2.4 State Management & Anti-Double-Count dengan TTL Purge
-* `state.py` menyimpan state kendaraan yang dilacak:
-  ```python
-  class TrackedObject:
-      track_id: int
-      class_name: str
-      smp_value: float
-      counted_inbound: bool = False
-      counted_outbound: bool = False
-      last_seen_frame: int
-  ```
-* **Status Transisi:** `OUTSIDE` $\rightarrow$ `INSIDE_ROI` $\rightarrow$ `COUNTED`.
-* **Memory Purge:** Objek yang tidak terdeteksi selama lebih dari 60 frame berturut-turut akan dihapus dari *active tracking memory* untuk mencegah memori membengkak (*leak prevention*).
+### 2.4 State Management & Dynamic Stream Switching
+* `state.py` mengelola:
+  * Active stream URL dan stream name.
+  * Single-pass pre-encoded JPEG bytes buffer untuk optimasi konkurensi client.
+  * Active ROIs dengan validasi minimal 3 titik ($N \ge 3$).
+  * Rolling tracking history dengan TTL purge 60 frame.
 
 ---
 
@@ -155,110 +152,88 @@ Smart-Monitoring/
 ### 3.1 REST Endpoints
 1. `GET /api/v1/health`  
    * **Response:** `{"status": "ok", "stream_active": true, "fps": 12.5}`
-2. `GET /api/v1/roi`  
+2. `GET /api/v1/stream-source`  
    * **Response:**
      ```json
      {
-       "inbound": [[0.1, 0.4], [0.4, 0.4], [0.4, 0.9], [0.1, 0.9]],
-       "outbound": [[0.6, 0.4], [0.9, 0.4], [0.9, 0.9], [0.6, 0.9]]
+       "active_source": {
+         "id": "surakarta_balaikota",
+         "name": "ATCS Surakarta — Simpang Balai Kota",
+         "url": "http://bptdjatengdiy.dephub.go.id:8000/live/atcs_surakarta_balaikota.flv"
+       },
+       "presets": [
+         {
+           "id": "surakarta_balaikota",
+           "name": "ATCS Surakarta — Simpang Balai Kota",
+           "url": "http://bptdjatengdiy.dephub.go.id:8000/live/atcs_surakarta_balaikota.flv"
+         },
+         {
+           "id": "surakarta_gladak",
+           "name": "ATCS Surakarta — Simpang Gladak",
+           "url": "http://bptdjatengdiy.dephub.go.id:8000/live/atcs_surakarta_gladak.flv"
+         },
+         {
+           "id": "surakarta_kerten",
+           "name": "ATCS Surakarta — Simpang Kerten",
+           "url": "http://bptdjatengdiy.dephub.go.id:8000/live/atcs_surakarta_kerten.flv"
+         },
+         {
+           "id": "surakarta_gendengan",
+           "name": "ATCS Surakarta — Simpang Gendengan",
+           "url": "http://bptdjatengdiy.dephub.go.id:8000/live/atcs_surakarta_gendengan.flv"
+         },
+         {
+           "id": "synthetic_loop",
+           "name": "Synthetic Traffic Simulator (In-Memory Fallback)",
+           "url": "synthetic://traffic_loop"
+         }
+       ]
      }
      ```
-3. `POST /api/v1/roi`  
+3. `POST /api/v1/stream-source`  
    * **Request Body:**
      ```json
      {
-       "inbound": [[0.1, 0.4], [0.4, 0.4], [0.4, 0.9], [0.1, 0.9]],
-       "outbound": [[0.6, 0.4], [0.9, 0.4], [0.9, 0.9], [0.6, 0.9]]
+       "url": "http://bptdjatengdiy.dephub.go.id:8000/live/atcs_surakarta_gladak.flv",
+       "name": "ATCS Surakarta — Simpang Gladak"
      }
      ```
+   * **Response:** `{"status": "success", "message": "Stream source switched successfully", "active_source": {...}}`
+4. `GET /api/v1/roi`  
+   * **Response:** `{"inbound": [...], "outbound": [...]}`
+5. `POST /api/v1/roi` (Validasi $N \ge 3$ atau $N = 0$)  
    * **Response:** `{"status": "success", "message": "ROI updated successfully"}`
-4. `POST /api/v1/reset-counter`  
+6. `POST /api/v1/reset-counter`  
    * **Response:** `{"status": "success", "message": "Counters reset to zero"}`
-5. `GET /api/v1/stream`  
-   * **Response Content-Type:** `multipart/x-mixed-replace; boundary=frame` (MJPEG video stream dengan bounding box dan visualisasi poligon ROI).
+7. `GET /api/v1/stream`  
+   * **Response Content-Type:** `multipart/x-mixed-replace; boundary=frame`
 
 ### 3.2 WebSocket Stream (`/ws/metrics`)
 * **Interval:** Broadcast 1 detik sekali.
-* **Payload Format:**
-  ```json
-  {
-    "timestamp": 1771982400.12,
-    "fps": 12.4,
-    "inbound": {
-      "total_smp": 45.5,
-      "smp_per_minute": 14.2,
-      "density_level": "SEDANG",
-      "breakdown": {
-        "motorcycle": 35,
-        "car": 21,
-        "bus": 2,
-        "truck": 4
-      }
-    },
-    "outbound": {
-      "total_smp": 38.0,
-      "smp_per_minute": 11.5,
-      "density_level": "SEDANG",
-      "breakdown": {
-        "motorcycle": 28,
-        "car": 18,
-        "bus": 1,
-        "truck": 3
-      }
-    },
-    "recent_events": [
-      {
-        "id": "evt_1092",
-        "timestamp": "14:30:15",
-        "direction": "inbound",
-        "vehicle_type": "car",
-        "smp": 1.0
-      }
-    ]
-  }
-  ```
+* **Payload:** Metrik real-time mencakup total SMP, rolling SMP/menit (60s), density level, vehicle breakdown per arah, dan 15 recent events.
 
 ---
 
 ## 4. Frontend & Interactive Canvas
 
 ### 4.1 UI Layout (Dark/Modern Glassmorphism)
-* **Top Navigation:** Status CCTV Live (Surakarta Balai Kota / Fallback), Status WebSocket, FPS Indicator, dan Tombol Setting/ROI.
-* **Main Area (Grid 2 Kolom):**
-  * **Kiri (Video & Canvas):**
-    * MJPEG `<img />` stream viewer.
-    * Overlay HTML5 `<canvas />` untuk pembuatan titik poligon (klik untuk menambah titik, double click untuk menutup poligon).
-    * Toolbar: Mode Inbound (Green/Cyan), Mode Outbound (Orange/Red), Clear ROI, Save ROI, Reset Counters.
-  * **Kanan (Metrik & Visualisasi):**
-    * Inbound vs Outbound SMP Comparison Cards (Indikator SMP Kumulatif, SMP/Menit, Density Badge).
-    * Breakdown Card per Tipe Kendaraan dengan koefisien SMP masing-masing.
-    * Real-time Line Chart (Beban Lalu Lintas SMP 5 Menit Terakhir).
-    * Live Event Activity Feed (10 riwayat kendaraan terakhir terhitung).
+* **Top Navigation:** Status CCTV Live, Status WebSocket, FPS Indicator, dan Tombol **"Ganti Kamera / Input URL"**.
+* **Stream Source Switcher Modal (`CCTVSelectorModal.tsx`):**
+  * Grid preset kamera ATCS siap pakai (Balai Kota, Gladak, Kerten, Gendengan, Synthetic Fallback).
+  * Input Form URL Custom (mendukung stream FLV / HLS / MP4 / RTSP dari berbagai kota/sumber).
+* **Video Player & Canvas (`VideoPlayer.tsx`, `CanvasROI.tsx`):**
+  * MJPEG `<img />` stream viewer dengan HUD camera name & FPS.
+  * Overlay Canvas ROI Inbound & Outbound ($0.0 \dots 1.0$).
+* **Analytics Panel (`MetricsCard.tsx`, `VehicleBreakdown.tsx`, `TrafficChart.tsx`, `LiveFeed.tsx`):**
+  * Perbandingan beban jalan Inbound vs Outbound.
+  * Visualisasi Recharts tren SMP/menit secara reaktif.
+  * Log 15 kendaraan terakhir yang terhitung secara akurat.
 
 ---
 
 ## 5. Resiliency, Performance & Deployment
-
-1. **Stream Reconnection:**  
-   * `stream_reader.py` memonitor kegagalan baca frame dengan batas toleransi 5 frame gagal sebelum melakukan reconnect otomatis dengan *exponential backoff* (1s, 2s, 4s, max 10s).
-   * Disediakan file sampel video MP4/AVI sintetis di `backend/sample_data/` sebagai auto-fallback saat stream FLV publik unreachable.
-2. **CPU Free-Tier Throttling:**  
-   * Loop inferensi dibatasi pada 10–15 FPS menggunakan `time.sleep` adaptif berdasarkan delta waktu komputasi frame.
-3. **Deployment Strategy:**  
-   * **Backend:** Hugging Face Spaces (Docker runtime) / Cloudflare Tunnel / Local.
-   * **Frontend:** Vercel (Next.js App Router).
-   * Variabel lingkungan `NEXT_PUBLIC_BACKEND_URL` dan `NEXT_PUBLIC_WS_URL` fleksibel untuk URL lokal maupun remote.
-
----
-
-## 6. Rencana Pengujian (Testing Strategy)
-* **Backend Unit Tests:**
-  * Pengujian perhitungan SMP sesuai bobot PKJI (`test_roi_tracker.py`).
-  * Pengujian `pointPolygonTest` dan normalisasi koordinat ($0.0 \dots 1.0$).
-  * Pengujian memory purge TTL pada `state.py`.
-* **Integration Tests:**
-  * Endpoint REST `/api/v1/roi` dan `/api/v1/reset-counter`.
-  * Endpoint WebSocket broadcast `/ws/metrics`.
-* **Frontend Component & Hook Tests:**
-  * Pengecekan rendering canvas dan kalkulasi koordinat relatif.
-  * Pengecekan hook `useWebSocket` auto-reconnection logic.
+1. **Dynamic Reconnection:** `stream_reader.py` mendukung switch stream *on-the-fly* tanpa perlu restart server atau uvicorn instance.
+2. **In-Memory Fallback:** Jika URL kamera publik sedang mati/unreachable, sistem secara otomatis beralih ke *real-time in-memory traffic generator*.
+3. **Target Environment:**
+   * Backend: Render.com / Hugging Face / Docker Container.
+   * Frontend: Vercel App Router.

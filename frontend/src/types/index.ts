@@ -34,3 +34,20 @@ export interface ROICoordinates {
   inbound: [number, number][];
   outbound: [number, number][];
 }
+
+export interface CCTVPreset {
+  id: string;
+  name: string;
+  location: string;
+  url: string;
+}
+
+export interface ActiveStreamSource {
+  name: string;
+  url: string;
+}
+
+export interface StreamSourceInfo {
+  active_source: ActiveStreamSource;
+  presets: CCTVPreset[];
+}
