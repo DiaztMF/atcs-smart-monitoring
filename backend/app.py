@@ -1,3 +1,8 @@
+import os
+# Set writable config dir for Ultralytics in serverless/container environments
+os.environ["YOLO_CONFIG_DIR"] = "/tmp/Ultralytics"
+os.environ["GRADIO_ANALYTICS_ENABLED"] = "False"
+
 import gradio as gr
 from fastapi.responses import HTMLResponse
 from app.main import app as fastapi_app
