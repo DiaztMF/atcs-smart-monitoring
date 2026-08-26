@@ -1,8 +1,8 @@
 import gradio as gr
-from app.main import app
+from app.main import app as fastapi_app
 from app.core.config import settings
 
-# Create a lightweight Gradio landing interface for Hugging Face Spaces status
+# Create a clean Gradio interface for HF Spaces
 with gr.Blocks(title=settings.PROJECT_NAME) as demo:
     gr.Markdown(f"# 🚦 {settings.PROJECT_NAME} — Backend API")
     gr.Markdown("Layanan Backend Real-Time Computer Vision & Traffic Load Monitoring (SMP) aktif dan berjalan.")
@@ -15,8 +15,8 @@ with gr.Blocks(title=settings.PROJECT_NAME) as demo:
         - ⚡ **WebSocket Broadcaster:** `/ws/metrics`
         """)
 
-# Mount Gradio onto the existing FastAPI application
-app = gr.mount_gradio_app(app, demo, path="/")
+# Mount Gradio onto FastAPI app
+app = gr.mount_gradio_app(fastapi_app, demo, path="/")
 
 if __name__ == "__main__":
     import uvicorn

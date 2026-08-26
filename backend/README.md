@@ -4,14 +4,14 @@ emoji: 🚦
 colorFrom: green
 colorTo: blue
 sdk: gradio
-sdk_version: 4.44.0
+sdk_version: 5.16.0
 app_file: app.py
 pinned: false
 ---
 
 # ATCS Smart Traffic Monitoring — Backend Service
 
-Real-Time Computer Vision & Traffic Analytics Backend powered by FastAPI, YOLOv11 Nano, ByteTrack, and Gradio SDK.
+Real-Time Computer Vision & Traffic Analytics Backend powered by FastAPI, YOLOv11 Nano, ByteTrack, and Gradio 5.
 
 ## Endpoints
 
