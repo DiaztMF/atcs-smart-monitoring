@@ -1,7 +1,7 @@
 import os
 import threading
 import time
-from typing import Optional
+from typing import Optional, Tuple
 import cv2
 import numpy as np
 from app.core.config import settings
@@ -15,6 +15,7 @@ class StreamReaderWorker:
         self.running = False
         self.thread: Optional[threading.Thread] = None
         self.cap: Optional[cv2.VideoCapture] = None
+        self.synthetic_frame_counter: int = 0
 
     def start(self):
         if not self.running:
@@ -27,22 +28,66 @@ class StreamReaderWorker:
         self.running = False
         if self.cap is not None:
             self.cap.release()
+            self.cap = None
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
         logger.info("Stream reader worker stopped.")
 
-    def _get_capture_source(self) -> cv2.VideoCapture:
-        logger.info(f"Connecting to primary stream: {settings.VIDEO_STREAM_URL}")
-        cap = cv2.VideoCapture(settings.VIDEO_STREAM_URL)
-        if not cap.isOpened():
-            logger.warning(f"Primary stream unreachable. Falling back to: {settings.FALLBACK_VIDEO_PATH}")
-            # Check relative fallback path
-            fallback = settings.FALLBACK_VIDEO_PATH
-            if not os.path.exists(fallback):
-                # Try relative to backend dir
-                fallback = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), fallback)
-            cap = cv2.VideoCapture(fallback)
-        return cap
+    def _get_capture_source(self) -> Optional[cv2.VideoCapture]:
+        try:
+            logger.info(f"Connecting to primary stream: {settings.VIDEO_STREAM_URL}")
+            cap = cv2.VideoCapture(settings.VIDEO_STREAM_URL)
+            if cap.isOpened():
+                return cap
+        except Exception as e:
+            logger.warning(f"Error opening primary stream: {e}")
+
+        # Fallback local video paths
+        candidates = [
+            settings.FALLBACK_VIDEO_PATH,
+            os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "sample_data", "synthetic_traffic.mp4"),
+            "sample_data/synthetic_traffic.mp4",
+            "backend/sample_data/synthetic_traffic.mp4"
+        ]
+        
+        for cand in candidates:
+            if os.path.exists(cand):
+                try:
+                    logger.warning(f"Using fallback video file: {cand}")
+                    cap = cv2.VideoCapture(cand)
+                    if cap.isOpened():
+                        return cap
+                except Exception as e:
+                    logger.warning(f"Error opening fallback file {cand}: {e}")
+
+        logger.warning("No video source or fallback file available. Utilizing real-time in-memory synthetic stream generator.")
+        return None
+
+    def _generate_synthetic_memory_frame(self) -> np.ndarray:
+        """Generates dynamic synthetic CCTV frames in memory if no video source is accessible."""
+        self.synthetic_frame_counter += 1
+        i = self.synthetic_frame_counter
+        
+        frame = np.full((360, 640, 3), 45, dtype=np.uint8)
+        
+        # Road lane markers
+        cv2.line(frame, (320, 0), (320, 360), (255, 255, 255), 2)
+        cv2.line(frame, (100, 0), (100, 360), (200, 200, 200), 2)
+        cv2.line(frame, (540, 0), (540, 360), (200, 200, 200), 2)
+        
+        # Simulated moving Inbound Car (top to bottom)
+        car_y = int((i * 4) % 360)
+        cv2.rectangle(frame, (180, car_y), (250, min(360, car_y + 60)), (180, 50, 50), -1)
+        cv2.putText(frame, "SIMULATED VEHICLE (INBOUND)", (130, max(20, car_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+
+        # Simulated moving Outbound Motorcycle (bottom to top)
+        moto_y = int((360 - (i * 5)) % 360)
+        cv2.rectangle(frame, (400, moto_y), (430, min(360, moto_y + 40)), (50, 180, 50), -1)
+        cv2.putText(frame, "SIMULATED MOTOR (OUTBOUND)", (360, max(20, moto_y - 5)),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
+        
+        return frame
 
     def _run_loop(self):
         frame_idx = 0
@@ -55,24 +100,26 @@ class StreamReaderWorker:
 
         while self.running:
             loop_start = time.time()
-            if self.cap is None or not self.cap.isOpened():
-                time.sleep(1.0)
-                self.cap = self._get_capture_source()
-                continue
+            frame = None
 
-            ret, frame = self.cap.read()
-            if not ret or frame is None:
-                consecutive_failures += 1
-                if consecutive_failures > 5:
-                    logger.info("End of stream/file reached. Reopening stream/looping fallback...")
-                    self.cap.release()
-                    time.sleep(0.5)
-                    self.cap = self._get_capture_source()
+            if self.cap is not None and self.cap.isOpened():
+                ret, captured_frame = self.cap.read()
+                if ret and captured_frame is not None:
+                    frame = captured_frame
                     consecutive_failures = 0
-                time.sleep(0.05)
-                continue
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures > 5:
+                        logger.info("Restarting/looping video stream source...")
+                        self.cap.release()
+                        time.sleep(0.5)
+                        self.cap = self._get_capture_source()
+                        consecutive_failures = 0
+            
+            # If no physical frame captured from video, use in-memory synthetic frame
+            if frame is None:
+                frame = self._generate_synthetic_memory_frame()
 
-            consecutive_failures = 0
             frame_idx += 1
             fps_frame_counter += 1
             
@@ -115,3 +162,4 @@ class StreamReaderWorker:
 
         if self.cap:
             self.cap.release()
+            self.cap = None

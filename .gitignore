@@ -27,6 +27,10 @@ htmlcov/
 *.pth
 *.onnx
 *.engine
+*.mp4
+*.avi
+*.mkv
+*.flv
 
 # Node / Next.js
 frontend/node_modules/
