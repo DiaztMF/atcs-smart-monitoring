@@ -231,7 +231,7 @@ export default function Dashboard() {
           {/* Video Player & ROI Toolbar */}
           <VideoPlayer
             key={streamKey}
-            streamUrl={`${BACKEND_URL}/api/v1/stream`}
+            streamUrl={`${BACKEND_URL}/api/v1/stream?t=${streamKey}`}
             fps={metrics.fps}
             cameraName={cameraName}
             isConnected={isConnected}

@@ -67,48 +67,77 @@ class StreamReaderWorker:
         self.detector = detector
         self.running = False
         self.thread: Optional[threading.Thread] = None
-        self.cap: Optional[cv2.VideoCapture] = None
-        self._reconnect_requested: bool = False
+        self._cap_lock = threading.Lock()
+        self._cap: Optional[cv2.VideoCapture] = None
+        self._is_connecting: bool = False
         self._offline_reason: str = "Menghubungkan..."
 
-    def start(self):
+    # ------------------------------------------------------------------
+    # Public cap accessor (thread-safe)
+    # ------------------------------------------------------------------
+    def _get_cap(self) -> Optional[cv2.VideoCapture]:
+        with self._cap_lock:
+            return self._cap
+
+    def _set_cap(self, cap: Optional[cv2.VideoCapture]) -> None:
+        with self._cap_lock:
+            if self._cap is not None:
+                self._cap.release()
+            self._cap = cap
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+    def start(self) -> None:
         if not self.running:
             self.running = True
+            self._offline_reason = "Menghubungkan..."
             self.thread = threading.Thread(target=self._run_loop, daemon=True)
             self.thread.start()
             logger.info("Stream reader worker started.")
+            # Kick off initial connection asynchronously
+            self._spawn_connect_thread()
 
-    def stop(self):
+    def stop(self) -> None:
         self.running = False
-        if self.cap is not None:
-            self.cap.release()
-            self.cap = None
+        self._set_cap(None)
         if self.thread and self.thread.is_alive():
             self.thread.join(timeout=2.0)
         logger.info("Stream reader worker stopped.")
 
     def switch_stream(self, new_url: str, stream_name: str) -> None:
-        """Dynamically switches stream source on the fly without restarting server."""
+        """Switches stream source without blocking the MJPEG loop."""
         logger.info(f"Switching stream source to: {stream_name} ({new_url})")
         self._offline_reason = "Menghubungkan..."
         global_state.set_active_stream(new_url, stream_name)
-        self._reconnect_requested = True
+        # Drop current cap immediately so offline frame shows right away
+        self._set_cap(None)
+        # Connect to new source in background thread
+        self._spawn_connect_thread()
 
-    def _get_capture_source(self) -> Optional[cv2.VideoCapture]:
+    # ------------------------------------------------------------------
+    # Async connect (runs in its own short-lived thread)
+    # ------------------------------------------------------------------
+    def _spawn_connect_thread(self) -> None:
+        if self._is_connecting:
+            return  # already attempting; skip duplicate
+        t = threading.Thread(target=self._connect_to_stream, daemon=True)
+        t.start()
+
+    def _connect_to_stream(self) -> None:
+        self._is_connecting = True
         active_stream = global_state.get_active_stream()
         stream_url = active_stream["url"]
 
         if stream_url.startswith("synthetic://"):
-            logger.info("Synthetic mode selected — offline frame will display.")
+            logger.info("Synthetic mode — showing offline frame.")
             self._offline_reason = "Mode Demo Aktif"
-            return None
+            self._set_cap(None)
+            self._is_connecting = False
+            return
 
         try:
             logger.info(f"Connecting to stream: {stream_url}")
-            # FFmpeg options for live HTTPS FLV streams:
-            # tls_verify=0  — skip TLS certificate validation (self-signed ATCS certs)
-            # timeout       — per-read timeout in microseconds (15s)
-            # reconnect_*   — auto-reconnect on dropped streams
             os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
                 "rtsp_transport;tcp|"
                 "tls_verify;0|"
@@ -119,21 +148,26 @@ class StreamReaderWorker:
             )
             cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
             if cap.isOpened():
+                logger.info(f"Stream connected: {stream_url}")
                 self._offline_reason = ""
-                return cap
+                self._set_cap(cap)
             else:
                 self._offline_reason = "Gagal Membuka Stream"
                 logger.warning(f"Stream did not open: {stream_url}")
+                self._set_cap(None)
         except Exception as exc:
             self._offline_reason = "Error Koneksi"
             logger.warning(f"Error opening stream {stream_url}: {exc}")
+            self._set_cap(None)
 
-        return None
+        self._is_connecting = False
 
-    def _run_loop(self):
+    # ------------------------------------------------------------------
+    # Main frame loop
+    # ------------------------------------------------------------------
+    def _run_loop(self) -> None:
         frame_idx = 0
         consecutive_failures = 0
-        self.cap = self._get_capture_source()
         target_frame_time = 1.0 / max(1, settings.TARGET_FPS)
         fps_timer = time.time()
         fps_frame_counter = 0
@@ -141,19 +175,11 @@ class StreamReaderWorker:
 
         while self.running:
             loop_start = time.time()
-            frame = None
+            frame: Optional[np.ndarray] = None
 
-            # Handle dynamic stream switch request
-            if self._reconnect_requested:
-                if self.cap is not None:
-                    self.cap.release()
-                    self.cap = None
-                self.cap = self._get_capture_source()
-                self._reconnect_requested = False
-                consecutive_failures = 0
-
-            if self.cap is not None and self.cap.isOpened():
-                ret, captured_frame = self.cap.read()
+            cap = self._get_cap()
+            if cap is not None and cap.isOpened():
+                ret, captured_frame = cap.read()
                 if ret and captured_frame is not None:
                     frame = captured_frame
                     consecutive_failures = 0
@@ -161,15 +187,15 @@ class StreamReaderWorker:
                     consecutive_failures += 1
                     if consecutive_failures > 5:
                         logger.warning("Stream dropped — showing offline frame and retrying in 10s.")
-                        self.cap.release()
-                        self.cap = None
+                        self._set_cap(None)
                         self._offline_reason = "Stream Terputus — Mencoba Ulang"
-                        # Wait before retry so we don't hammer a dead server
-                        time.sleep(10.0)
-                        self.cap = self._get_capture_source()
                         consecutive_failures = 0
+                        # Schedule reconnect after 10s without blocking this loop
+                        threading.Thread(
+                            target=self._delayed_reconnect, args=(10.0,), daemon=True
+                        ).start()
 
-            # No live frame: render offline error card instead of fallback video
+            # No live frame: render offline error card
             if frame is None:
                 active_stream = global_state.get_active_stream()
                 stream_name = active_stream.get("name", "Kamera ATCS")
@@ -184,7 +210,7 @@ class StreamReaderWorker:
                 fps_frame_counter = 0
                 fps_timer = time.time()
 
-            # Resize frame to standardized processing dimensions
+            # Resize to standardized processing dimensions
             resized_frame = cv2.resize(frame, (settings.STREAM_WIDTH, settings.STREAM_HEIGHT))
             global_state.set_raw_frame(resized_frame)
             global_state.set_stream_status(True, current_fps)
@@ -193,7 +219,7 @@ class StreamReaderWorker:
             inbound_poly = global_state.get_roi("inbound")
             outbound_poly = global_state.get_roi("outbound")
 
-            # Run AI Inference & Spatial tracking
+            # AI inference & spatial tracking
             annotated_frame, metrics = self.detector.detect_and_track(
                 frame=resized_frame,
                 current_frame_idx=frame_idx,
@@ -203,8 +229,11 @@ class StreamReaderWorker:
 
             metrics["fps"] = current_fps
 
-            # Single-pass JPEG encoding (shared for all connected clients)
-            ret_enc, buffer = cv2.imencode('.jpg', annotated_frame, [int(cv2.IMWRITE_JPEG_QUALITY), settings.JPEG_QUALITY])
+            # Single-pass JPEG encoding shared across all MJPEG clients
+            ret_enc, buffer = cv2.imencode(
+                '.jpg', annotated_frame,
+                [int(cv2.IMWRITE_JPEG_QUALITY), settings.JPEG_QUALITY]
+            )
             encoded_bytes = buffer.tobytes() if ret_enc else None
 
             global_state.set_annotated_frame(annotated_frame, encoded_jpeg=encoded_bytes)
@@ -215,6 +244,10 @@ class StreamReaderWorker:
             sleep_duration = max(0.001, target_frame_time - elapsed)
             time.sleep(sleep_duration)
 
-        if self.cap:
-            self.cap.release()
-            self.cap = None
+        self._set_cap(None)
+
+    def _delayed_reconnect(self, delay_seconds: float) -> None:
+        """Waits then attempts reconnect — avoids hammering a dead server."""
+        time.sleep(delay_seconds)
+        if self.running:
+            self._spawn_connect_thread()
