@@ -42,7 +42,7 @@ class TrafficDetector:
                     source=frame,
                     persist=True,
                     classes=TARGET_CLASSES,
-                    tracker="bytetrack.yaml",
+                    tracker="botsort.yaml",
                     verbose=False
                 )
                 
