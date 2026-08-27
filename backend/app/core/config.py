@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseSettings):
     PROJECT_NAME: str = "Smart Traffic Monitoring"
@@ -53,8 +53,10 @@ class AppSettings(BaseSettings):
         }
     ]
     
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="allow"
+    )
 
 settings = AppSettings()
