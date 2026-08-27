@@ -7,6 +7,8 @@ export interface VehicleBreakdown {
   truck: number;
 }
 
+export type VehicleBreakdownCounts = VehicleBreakdown;
+
 export interface DirectionMetrics {
   total_smp: number;
   smp_per_minute: number;
@@ -14,12 +16,24 @@ export interface DirectionMetrics {
   breakdown: VehicleBreakdown;
 }
 
+export type VehicleType = 'motorcycle' | 'car' | 'bus' | 'truck';
+export type DirectionType = 'IN' | 'OUT';
+
 export interface VehicleEvent {
   id: string;
   timestamp: string;
   direction: 'inbound' | 'outbound';
-  vehicle_type: 'motorcycle' | 'car' | 'bus' | 'truck';
+  vehicle_type: VehicleType;
   smp: number;
+}
+
+export interface DetectionLogEvent {
+  id: string;
+  time: string;
+  type: VehicleType;
+  direction: DirectionType;
+  lane: string;
+  status: string;
 }
 
 export interface TrafficMetrics {
@@ -30,9 +44,11 @@ export interface TrafficMetrics {
   recent_events: VehicleEvent[];
 }
 
+export type Point = [number, number];
+
 export interface ROICoordinates {
-  inbound: [number, number][];
-  outbound: [number, number][];
+  inbound: Point[];
+  outbound: Point[];
 }
 
 export interface CCTVPreset {
