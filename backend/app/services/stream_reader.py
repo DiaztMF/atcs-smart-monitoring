@@ -50,12 +50,23 @@ class StreamReaderWorker:
 
         try:
             logger.info(f"Connecting to stream: {stream_url}")
-            cap = cv2.VideoCapture(stream_url)
+            # Pass FFmpeg options for live HTTPS FLV streams:
+            # - tls_verify=0  : skip TLS certificate validation (self-signed certs on ATCS servers)
+            # - timeout       : per-read timeout in microseconds (15s)
+            # - reconnect_*   : auto-reconnect on dropped streams
+            os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = (
+                "rtsp_transport;tcp|"
+                "tls_verify;0|"
+                "timeout;15000000|"
+                "reconnect;1|"
+                "reconnect_streamed;1|"
+                "reconnect_delay_max;5"
+            )
+            cap = cv2.VideoCapture(stream_url, cv2.CAP_FFMPEG)
             if cap.isOpened():
                 return cap
         except Exception as e:
             logger.warning(f"Error opening stream {stream_url}: {e}")
-
         # Fallback local video paths if remote fails
         candidates = [
             settings.FALLBACK_VIDEO_PATH,
