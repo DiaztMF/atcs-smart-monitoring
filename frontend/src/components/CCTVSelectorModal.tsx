@@ -1,7 +1,7 @@
 'use client';
 
-import React, { useState } from 'react';
-import { X, Camera, Link as LinkIcon, Check, MapPin, Radio, Sparkles } from 'lucide-react';
+import React, { useState, useMemo } from 'react';
+import { X, Camera, Link as LinkIcon, Check, MapPin, Radio, Sparkles, Search } from 'lucide-react';
 import { StreamSourceInfo, CCTVPreset } from '@/types';
 
 interface CCTVSelectorModalProps {
@@ -17,10 +17,24 @@ export default function CCTVSelectorModal({
   streamInfo,
   onSelectSource,
 }: CCTVSelectorModalProps) {
+  const [searchQuery, setSearchQuery] = useState('');
   const [customUrl, setCustomUrl] = useState('');
   const [customName, setCustomName] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  const presets = streamInfo?.presets || [];
+
+  const filteredPresets = useMemo(() => {
+    const q = searchQuery.toLowerCase().trim();
+    if (!q) return presets;
+    return presets.filter(
+      (p) =>
+        p.name.toLowerCase().includes(q) ||
+        (p.location && p.location.toLowerCase().includes(q)) ||
+        p.url.toLowerCase().includes(q)
+    );
+  }, [presets, searchQuery]);
 
   if (!isOpen) return null;
 
@@ -63,7 +77,7 @@ export default function CCTVSelectorModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
-      <div className="relative w-full max-w-2xl bg-white border border-[#e2e8f0] rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh] animate-modal-enter">
+      <div className="relative w-full max-w-3xl bg-white border border-[#e2e8f0] rounded-xl shadow-xl overflow-hidden flex flex-col max-h-[90vh] animate-modal-enter">
         {/* Modal Header */}
         <div className="px-6 py-4 border-b border-[#e2e8f0] flex items-center justify-between bg-slate-50/50">
           <div className="flex items-center space-x-3">
@@ -73,7 +87,7 @@ export default function CCTVSelectorModal({
             <div>
               <h2 className="text-base font-semibold text-slate-900">Pilih Sumber CCTV</h2>
               <p className="text-xs text-slate-500">
-                Pilih dari preset ATCS Dishub atau masukkan URL streaming video kustom
+                Pilih dari {presets.length} kamera live streaming ATCS Dishub Surakarta atau input URL kustom
               </p>
             </div>
           </div>
@@ -93,47 +107,77 @@ export default function CCTVSelectorModal({
             </div>
           )}
 
-          {/* Section 1: Preset CCTV ATCS */}
+          {/* Section 1: Preset CCTV ATCS with Search */}
           <div className="space-y-3">
-            <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
-              <Radio className="w-3.5 h-3.5 text-emerald-600" /> Preset Kamera ATCS Surakarta
-            </h3>
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider flex items-center gap-1.5">
+                <Radio className="w-3.5 h-3.5 text-emerald-600" /> Preset Kamera ATCS ({filteredPresets.length} Kamera)
+              </h3>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {streamInfo?.presets.map((preset) => {
-                const isActive = activeUrl === preset.url;
-                return (
+              {/* Search Bar */}
+              <div className="relative w-full sm:w-64">
+                <Search className="w-3.5 h-3.5 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Cari lokasi / simpang..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-7 py-1.5 text-xs bg-slate-50 border border-[#e2e8f0] rounded-md text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 transition-shadow"
+                />
+                {searchQuery && (
                   <button
-                    key={preset.id}
-                    onClick={() => handleSelectPreset(preset)}
-                    disabled={isSubmitting}
-                    className={`p-3.5 rounded-lg text-left border transition-all ${
-                      isActive
-                        ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-300 shadow-sm'
-                        : 'bg-white border-[#e2e8f0] hover:border-slate-300 hover:bg-slate-50'
-                    }`}
+                    onClick={() => setSearchQuery('')}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-xs"
                   >
-                    <div className="flex items-start justify-between">
-                      <div className="font-semibold text-xs text-slate-800 flex items-center gap-1.5">
-                        {preset.id === 'synthetic_loop' ? (
-                          <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                        ) : (
-                          <Camera className="w-3.5 h-3.5 text-emerald-600" />
-                        )}
-                        {preset.name}
-                      </div>
-                      {isActive && (
-                        <span className="p-1 rounded-full bg-emerald-100 text-emerald-600">
-                          <Check className="w-3.5 h-3.5" />
-                        </span>
-                      )}
-                    </div>
-                    <div className="text-[11px] text-slate-500 flex items-center gap-1 mt-1.5 font-mono">
-                      <MapPin className="w-3 h-3 text-slate-400" /> {preset.location}
-                    </div>
+                    ×
                   </button>
-                );
-              })}
+                )}
+              </div>
+            </div>
+
+            {/* Presets Grid */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-2.5 max-h-[340px] overflow-y-auto pr-1">
+              {filteredPresets.length === 0 ? (
+                <div className="col-span-full py-8 text-center text-xs text-slate-400">
+                  Tidak ditemukan kamera dengan kata kunci &quot;{searchQuery}&quot;
+                </div>
+              ) : (
+                filteredPresets.map((preset) => {
+                  const isActive = activeUrl === preset.url;
+                  return (
+                    <button
+                      key={preset.id}
+                      onClick={() => handleSelectPreset(preset)}
+                      disabled={isSubmitting}
+                      className={`p-3 rounded-lg text-left border transition-all ${
+                        isActive
+                          ? 'bg-emerald-50/70 border-emerald-300 ring-1 ring-emerald-300 shadow-sm'
+                          : 'bg-white border-[#e2e8f0] hover:border-slate-300 hover:bg-slate-50'
+                      }`}
+                    >
+                      <div className="flex items-start justify-between gap-1.5">
+                        <div className="font-semibold text-[11px] text-slate-800 flex items-center gap-1.5 truncate">
+                          {preset.id === 'synthetic_loop' ? (
+                            <Sparkles className="w-3.5 h-3.5 text-amber-500 shrink-0" />
+                          ) : (
+                            <Camera className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
+                          )}
+                          <span className="truncate">{preset.name}</span>
+                        </div>
+                        {isActive && (
+                          <span className="p-0.5 rounded-full bg-emerald-100 text-emerald-600 shrink-0">
+                            <Check className="w-3 h-3" />
+                          </span>
+                        )}
+                      </div>
+                      <div className="text-[10px] text-slate-500 flex items-center gap-1 mt-1 font-mono truncate">
+                        <MapPin className="w-2.5 h-2.5 text-slate-400 shrink-0" />{' '}
+                        <span className="truncate">{preset.location}</span>
+                      </div>
+                    </button>
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -175,7 +219,7 @@ export default function CCTVSelectorModal({
                 </div>
               </div>
 
-              <div className="flex justify-end pt-2">
+              <div className="flex justify-end pt-1">
                 <button
                   type="submit"
                   disabled={isSubmitting}
