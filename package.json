@@ -1,0 +1,13 @@
+{
+  "name": "smart-traffic-monitoring",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Smart Traffic Monitoring — Real-Time Computer Vision & PKJI SMP Analytics",
+  "scripts": {
+    "dev": "npm --prefix frontend run dev",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "dev:backend": "uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --reload",
+    "build": "npm --prefix frontend run build",
+    "test:backend": "pytest backend/tests -v"
+  }
+}

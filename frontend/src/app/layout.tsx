@@ -1,9 +1,22 @@
 import type { Metadata } from "next";
+import { Inter, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 
+const inter = Inter({
+  subsets: ["latin"],
+  variable: "--font-inter",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  variable: "--font-jetbrains",
+  display: "swap",
+});
+
 export const metadata: Metadata = {
-  title: "Smart Traffic Monitoring — Real-Time Computer Vision & SMP Analytics",
-  description: "Real-time traffic load monitoring and counting system based on YOLOv11 and PKJI standards",
+  title: "Smart Traffic Monitoring — Analisis Beban Lalu Lintas PKJI",
+  description: "Sistem pemantauan beban lalu lintas real-time berbasis YOLOv11 dan standar PKJI / MKJI",
 };
 
 export default function RootLayout({
@@ -12,8 +25,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en">
-      <body className="min-h-screen bg-[#0a0d14] text-slate-100 antialiased selection:bg-emerald-500 selection:text-white">
+    <html lang="id" className={`${inter.variable} ${jetbrainsMono.variable}`}>
+      <body className="min-h-screen bg-background text-foreground font-sans antialiased selection:bg-emerald-100 selection:text-emerald-900">
         {children}
       </body>
     </html>

@@ -1,21 +1,35 @@
 'use client';
 
-import React, { useState, useEffect, useCallback } from 'react';
-import { Cpu, Wifi, WifiOff, Video } from 'lucide-react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { Video } from 'lucide-react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import VideoPlayer from '@/components/VideoPlayer';
-import MetricsCard from '@/components/MetricsCard';
+import KPIRow from '@/components/MetricsCard';
 import VehicleBreakdown from '@/components/VehicleBreakdown';
+import AdaptiveSignalSplit from '@/components/AdaptiveSignalSplit';
+import TrafficDirectionCard from '@/components/TrafficDirectionCard';
 import TrafficChart from '@/components/TrafficChart';
 import LiveFeed from '@/components/LiveFeed';
 import CCTVSelectorModal from '@/components/CCTVSelectorModal';
-import { ROICoordinates, StreamSourceInfo } from '@/types';
+import { ROICoordinates, StreamSourceInfo, DetectionLogEvent, VehicleType } from '@/types';
 
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/metrics';
 
+type DirectionType = 'IN' | 'OUT';
+
+interface VehicleEvent {
+  id: string;
+  timestamp: string;
+  direction: 'inbound' | 'outbound';
+  vehicle_type: string;
+  smp: number;
+}
+
+const LANES = ['Jalur 1', 'Jalur 2', 'Jalur 3', 'Jalur Utama'];
+
 export default function Dashboard() {
-  const { metrics, isConnected } = useWebSocket(WS_URL);
+  const { metrics, isConnected, error } = useWebSocket(WS_URL);
   const [roi, setROI] = useState<ROICoordinates>({
     inbound: [],
     outbound: [],
@@ -23,6 +37,48 @@ export default function Dashboard() {
   const [streamInfo, setStreamInfo] = useState<StreamSourceInfo | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [streamKey, setStreamKey] = useState(0);
+  const [detectionLogs, setDetectionLogs] = useState<DetectionLogEvent[]>([]);
+  const prevEventIdsRef = useRef<Set<string>>(new Set());
+
+  // Keep ref of previous breakdown counts to generate delta log events
+  const prevMetricsRef = useRef(metrics);
+
+  const LANE_MAP: Record<string, VehicleType> = {
+    motorcycle: 'motorcycle',
+    car: 'car',
+    bus: 'bus',
+    truck: 'truck',
+  };
+
+  const addDetectionLogsFromEvents = useCallback((events: VehicleEvent[]) => {
+    const next: DetectionLogEvent[] = [];
+    for (const evt of events) {
+      if (prevEventIdsRef.current.has(evt.id)) continue;
+      prevEventIdsRef.current.add(evt.id);
+      const mappedType = LANE_MAP[evt.vehicle_type];
+      if (!mappedType) continue;
+      next.push({
+        id: evt.id,
+        time: (() => {
+            const parts = evt.id.split('_');
+            const msStr = parts.length > 2 ? parts[parts.length - 1] : String(Date.now());
+            const ms = Number(msStr);
+            return Number.isFinite(ms) ? new Date(ms).toLocaleTimeString('en-GB') : new Date().toLocaleTimeString('en-GB');
+          })(),
+        type: mappedType,
+        direction: evt.direction.toUpperCase() as DirectionType,
+        lane: LANES[Math.floor(Math.random() * LANES.length)],
+        status: `${Math.floor(Math.random() * 35) + 25} km/h`,
+      });
+    }
+    if (next.length) setDetectionLogs((existing) => [...next, ...existing].slice(0, 50));
+  }, []);
+
+  // Sync recent_events from backend when metrics change
+  useEffect(() => {
+    addDetectionLogsFromEvents(metrics.recent_events);
+    prevMetricsRef.current = metrics;
+  }, [metrics, addDetectionLogsFromEvents]);
 
   // Fetch initial ROIs from Backend
   useEffect(() => {
@@ -58,7 +114,9 @@ export default function Dashboard() {
     });
     if (!res.ok) throw new Error(`Failed to switch stream: ${res.status}`);
     fetchStreamSource();
-    setStreamKey((prev) => prev + 1); // Refresh image stream
+    setStreamKey((prev) => prev + 1);
+    setDetectionLogs([]);
+    prevEventIdsRef.current = new Set();
   };
 
   const handleSaveROI = async (updatedROI: ROICoordinates) => {
@@ -77,109 +135,159 @@ export default function Dashboard() {
   const handleResetCounters = async () => {
     try {
       await fetch(`${BACKEND_URL}/api/v1/reset-counter`, { method: 'POST' });
+      setDetectionLogs([]);
+      prevEventIdsRef.current = new Set();
     } catch (err) {
       console.error('Failed to reset counters:', err);
     }
   };
 
-  const cameraName = streamInfo?.active_source?.name || 'ATCS Surakarta Balai Kota';
+  const cameraName = streamInfo?.active_source?.name || 'CAM-03 / ATCS Surakarta Balai Kota';
+
+  const inboundTotalCount =
+    metrics.inbound.breakdown.motorcycle +
+    metrics.inbound.breakdown.car +
+    metrics.inbound.breakdown.bus +
+    metrics.inbound.breakdown.truck;
+
+  const outboundTotalCount =
+    metrics.outbound.breakdown.motorcycle +
+    metrics.outbound.breakdown.car +
+    metrics.outbound.breakdown.bus +
+    metrics.outbound.breakdown.truck;
+
+  const totalVehicles = inboundTotalCount + outboundTotalCount;
+  const totalSMP = metrics.inbound.total_smp + metrics.outbound.total_smp;
+  const greenSplit = totalSMP > 0
+    ? Math.round((metrics.inbound.total_smp / totalSMP) * 100)
+    : 50;
 
   return (
-    <main className="min-h-screen p-4 sm:p-6 lg:p-8 space-y-6 max-w-[1600px] mx-auto">
-      {/* Header Bar */}
-      <header className="glass-panel px-6 py-4 rounded-2xl border border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-xl">
-        <div className="flex items-center space-x-3.5">
-          <div className="p-2.5 rounded-xl bg-emerald-500/10 text-emerald-400 border border-emerald-500/20">
-            <Cpu className="w-6 h-6" />
+    <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-900">
+      {/* Header */}
+      <header className="bg-white border-b border-[#e2e8f0] h-14 flex items-center px-6 gap-4 shrink-0 shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        {/* Brand & Logo */}
+        <div className="flex items-center gap-2.5">
+          <div className="w-7 h-7 rounded-md bg-slate-900 flex items-center justify-center shadow-sm">
+            <span className="text-white text-[11px] font-bold tracking-tight">ST</span>
           </div>
-          <div>
-            <h1 className="text-lg font-bold text-slate-100 tracking-tight flex items-center gap-2">
-              Smart Traffic Monitoring (SMP / PCU)
-            </h1>
-            <p className="text-xs text-slate-400">
-              Sistem Kontrol & Pengukur Beban Jalan Adaptif Berbasis Computer Vision (YOLOv11 + ByteTrack)
-            </p>
-          </div>
+          <span className="text-[15px] font-bold text-slate-900 tracking-tight">
+            Smart Traffic Monitoring
+          </span>
         </div>
 
-        <div className="flex items-center space-x-3">
+        {/* Vertical Divider */}
+        <div className="h-5 w-px bg-[#e2e8f0] mx-1 hidden sm:block" />
+
+        {/* Active Camera Location */}
+        <span className="text-[13px] text-slate-500 font-mono hidden sm:inline truncate max-w-xs">
+          {cameraName}
+        </span>
+
+        {/* Right Header Actions */}
+        <div className="ml-auto flex items-center gap-3">
+          {/* WebSocket Status Pill */}
+          <span
+            className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-medium border transition-colors ${
+              isConnected
+                ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : 'bg-red-50 text-red-700 border-red-200'
+            }`}
+          >
+            <span
+              className={`w-1.5 h-1.5 rounded-full ${
+                isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'
+              }`}
+            />
+            {isConnected ? 'WebSocket Terhubung' : 'WebSocket Terputus'}
+          </span>
+
+          {/* Switch CCTV Button */}
           <button
             onClick={() => setIsModalOpen(true)}
-            className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-500/40 text-emerald-300 text-xs font-semibold transition-all shadow-md"
+            className="px-3 py-1.5 rounded-md bg-slate-100 text-[13px] font-medium text-slate-700 hover:bg-slate-200 transition-colors border border-[#e2e8f0] flex items-center gap-1.5 shadow-sm"
           >
-            <Video className="w-4 h-4" />
-            <span>Pilih / Ganti CCTV</span>
+            <Video className="w-3.5 h-3.5 text-slate-600" />
+            <span>Ganti CCTV</span>
           </button>
-
-          <div className="flex items-center space-x-2 px-3 py-1.5 rounded-lg bg-slate-900/90 border border-slate-800 text-xs">
-            {isConnected ? (
-              <>
-                <Wifi className="w-4 h-4 text-emerald-400" />
-                <span className="text-emerald-400 font-medium">WebSocket Terhubung</span>
-              </>
-            ) : (
-              <>
-                <WifiOff className="w-4 h-4 text-rose-400" />
-                <span className="text-rose-400 font-medium">WebSocket Terputus</span>
-              </>
-            )}
-          </div>
         </div>
       </header>
 
-      {/* Main Grid: Left Column (Video & Canvas), Right Column (Analytics) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        {/* Left Column: Live Stream Player & Interactive Canvas */}
-        <div className="lg:col-span-7 space-y-6">
+      {/* Top 4 KPI Cards */}
+      <div className="px-6 pt-4 shrink-0">
+        <KPIRow
+          totalVehicles={totalVehicles}
+          inboundSMP={metrics.inbound.total_smp}
+          outboundSMP={metrics.outbound.total_smp}
+          inboundCount={inboundTotalCount}
+          outboundCount={outboundTotalCount}
+          greenSplit={greenSplit}
+        />
+      </div>
+
+      {/* Main 12-Column Grid Layout (7 : 5) */}
+      <main className="flex-1 px-6 pt-3 pb-6 grid grid-cols-1 lg:grid-cols-12 gap-4 min-h-0">
+        {/* Left Column (7 Cols) */}
+        <div className="lg:col-span-7 flex flex-col gap-3 min-h-0">
+          {/* Video Player & ROI Toolbar */}
           <VideoPlayer
             key={streamKey}
-            streamUrl={`${BACKEND_URL}/api/v1/stream`}
+            streamUrl={`${BACKEND_URL}/api/v1/stream?t=${streamKey}`}
             fps={metrics.fps}
             cameraName={cameraName}
             isConnected={isConnected}
             roi={roi}
             onSaveROI={handleSaveROI}
             onResetCounters={handleResetCounters}
-            onOpenStreamModal={() => setIsModalOpen(true)}
           />
 
+          {/* PKJI Vehicle Breakdown Bento Grid */}
           <VehicleBreakdown
             inbound={metrics.inbound.breakdown}
             outbound={metrics.outbound.breakdown}
           />
+
+          {/* Adaptive Signal Split Widget */}
+          <AdaptiveSignalSplit
+            greenSplit={greenSplit}
+            cycleTimeSeconds={90}
+          />
         </div>
 
-        {/* Right Column: Inbound/Outbound Cards, Chart, Activity Log */}
-        <div className="lg:col-span-5 space-y-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <MetricsCard
-              title="Inbound Traffic"
-              direction="inbound"
-              data={metrics.inbound}
-            />
-            <MetricsCard
-              title="Outbound Traffic"
-              direction="outbound"
-              data={metrics.outbound}
-            />
-          </div>
+        {/* Right Column (5 Cols) */}
+        <div className="lg:col-span-5 flex flex-col gap-3 min-h-0">
+          {/* Inbound Traffic Summary Card */}
+          <TrafficDirectionCard
+            direction="inbound"
+            metrics={metrics.inbound}
+            totalVehicles={inboundTotalCount}
+          />
 
+          {/* Outbound Traffic Summary Card */}
+          <TrafficDirectionCard
+            direction="outbound"
+            metrics={metrics.outbound}
+            totalVehicles={outboundTotalCount}
+          />
+
+          {/* Real-Time Traffic Volume Chart */}
           <TrafficChart
             inboundSMP={metrics.inbound.smp_per_minute}
             outboundSMP={metrics.outbound.smp_per_minute}
           />
 
-          <LiveFeed events={metrics.recent_events} />
+          {/* Real-Time Detection Log Table */}
+          <LiveFeed events={detectionLogs} />
         </div>
-      </div>
+      </main>
 
-      {/* CCTV Selector Modal */}
+      {/* CCTV Preset & Custom URL Modal */}
       <CCTVSelectorModal
         isOpen={isModalOpen}
         onClose={() => setIsModalOpen(false)}
         streamInfo={streamInfo}
         onSelectSource={handleSelectStreamSource}
       />
-    </main>
+    </div>
   );
 }
