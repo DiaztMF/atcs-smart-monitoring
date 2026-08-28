@@ -75,7 +75,13 @@ async def update_roi(roi_data: ROIModel):
 @router.post("/reset-counter")
 async def reset_counter():
     global_state.reset_counters()
-    return {"status": "success", "message": "Counters reset successfully"}
+    try:
+        from app.main import stream_worker
+        if hasattr(stream_worker, "detector") and stream_worker.detector is not None:
+            stream_worker.detector.reset()
+    except Exception:
+        pass
+    return {"status": "success", "message": "Counters and tracking state reset successfully"}
 
 @router.get("/stream")
 def video_stream():

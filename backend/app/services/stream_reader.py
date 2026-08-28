@@ -136,14 +136,18 @@ class StreamReaderWorker:
     # ------------------------------------------------------------------
     # Capture source management (thread-safe)
     # ------------------------------------------------------------------
+    def _close_sources_unlocked(self) -> None:
+        """Release capture sources WITHOUT acquiring the lock (caller must hold lock)."""
+        if self._stream_cap is not None:
+            self._stream_cap.release()
+            self._stream_cap = None
+        if self._cv_cap is not None:
+            self._cv_cap.release()
+            self._cv_cap = None
+
     def _close_sources(self) -> None:
         with self._stream_lock:
-            if self._stream_cap is not None:
-                self._stream_cap.release()
-                self._stream_cap = None
-            if self._cv_cap is not None:
-                self._cv_cap.release()
-                self._cv_cap = None
+            self._close_sources_unlocked()
 
     def _read_active_frame(self) -> Tuple[bool, Optional[np.ndarray]]:
         with self._stream_lock:
@@ -211,11 +215,10 @@ class StreamReaderWorker:
             # If HTTP/HTTPS/FLV/RTMP stream, use standalone FFmpeg pipeline
             if stream_url.startswith("http://") or stream_url.startswith("https://") or stream_url.startswith("rtmp://"):
                 ffmpeg_cap = FFmpegStreamCapture(stream_url, _STREAM_W, _STREAM_H)
-                # Test reading 1 frame to confirm connection
-                ret, frame = ffmpeg_cap.read()
-                if ret and frame is not None:
+                # Verify process started; actual frame reading happens in main loop
+                if ffmpeg_cap.process is not None:
                     with self._stream_lock:
-                        self._close_sources()
+                        self._close_sources_unlocked()
                         self._stream_cap = ffmpeg_cap
                     self._offline_reason = ""
                     logger.info(f"FFmpeg stream connected successfully: {stream_url}")
@@ -228,7 +231,7 @@ class StreamReaderWorker:
                 cv_cap = cv2.VideoCapture(stream_url)
                 if cv_cap.isOpened():
                     with self._stream_lock:
-                        self._close_sources()
+                        self._close_sources_unlocked()
                         self._cv_cap = cv_cap
                     self._offline_reason = ""
                 else:
@@ -258,6 +261,7 @@ class StreamReaderWorker:
             if ret and captured_frame is not None:
                 frame = captured_frame
                 consecutive_failures = 0
+                global_state.set_stream_status(True, current_fps)
             else:
                 consecutive_failures += 1
                 if consecutive_failures > 15:
@@ -268,6 +272,7 @@ class StreamReaderWorker:
                         threading.Thread(
                             target=self._delayed_reconnect, args=(8.0,), daemon=True
                         ).start()
+                global_state.set_stream_status(False, current_fps)
 
             # No live frame: render offline error card
             if frame is None:
@@ -285,7 +290,6 @@ class StreamReaderWorker:
                 fps_timer = time.time()
 
             global_state.set_raw_frame(frame)
-            global_state.set_stream_status(True, current_fps)
 
             # Retrieve active ROIs
             inbound_poly = global_state.get_roi("inbound")
@@ -319,7 +323,7 @@ class StreamReaderWorker:
         self._close_sources()
 
     def _delayed_reconnect(self, delay_seconds: float) -> None:
-        """Waits then attempts reconnect."""
+        """Waits then attempts reconnect with backoff."""
         time.sleep(delay_seconds)
         if self.running:
             self._spawn_connect_thread()

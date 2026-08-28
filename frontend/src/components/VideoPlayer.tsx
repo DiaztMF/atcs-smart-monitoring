@@ -27,6 +27,7 @@ export default function VideoPlayer({
   const [editMode, setEditMode] = useState<'inbound' | 'outbound' | 'view'>('inbound');
   const [isDrawing, setIsDrawing] = useState(false);
   const [currentTime, setCurrentTime] = useState<string>('');
+  const [isLoading, setIsLoading] = useState(true);
 
   // Update clock every second
   useEffect(() => {
@@ -40,6 +41,18 @@ export default function VideoPlayer({
     const interval = setInterval(updateTime, 1000);
     return () => clearInterval(interval);
   }, []);
+
+  // Mark stream as loaded once we have any live indicator
+  useEffect(() => {
+    if (isConnected || fps > 0) {
+      setIsLoading(false);
+    }
+  }, [isConnected, fps]);
+
+  // Reset loading state when camera changes
+  useEffect(() => {
+    setIsLoading(true);
+  }, [streamUrl]);
 
   const handleClearROI = () => {
     if (editMode === 'inbound') {

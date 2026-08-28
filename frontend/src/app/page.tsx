@@ -16,10 +16,20 @@ import { ROICoordinates, StreamSourceInfo, DetectionLogEvent, VehicleType } from
 const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/metrics';
 
+type DirectionType = 'IN' | 'OUT';
+
+interface VehicleEvent {
+  id: string;
+  timestamp: string;
+  direction: 'inbound' | 'outbound';
+  vehicle_type: string;
+  smp: number;
+}
+
 const LANES = ['Jalur 1', 'Jalur 2', 'Jalur 3', 'Jalur Utama'];
 
 export default function Dashboard() {
-  const { metrics, isConnected } = useWebSocket(WS_URL);
+  const { metrics, isConnected, error } = useWebSocket(WS_URL);
   const [roi, setROI] = useState<ROICoordinates>({
     inbound: [],
     outbound: [],
@@ -28,9 +38,47 @@ export default function Dashboard() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [streamKey, setStreamKey] = useState(0);
   const [detectionLogs, setDetectionLogs] = useState<DetectionLogEvent[]>([]);
+  const prevEventIdsRef = useRef<Set<string>>(new Set());
 
   // Keep ref of previous breakdown counts to generate delta log events
   const prevMetricsRef = useRef(metrics);
+
+  const LANE_MAP: Record<string, VehicleType> = {
+    motorcycle: 'motorcycle',
+    car: 'car',
+    bus: 'bus',
+    truck: 'truck',
+  };
+
+  const addDetectionLogsFromEvents = useCallback((events: VehicleEvent[]) => {
+    const next: DetectionLogEvent[] = [];
+    for (const evt of events) {
+      if (prevEventIdsRef.current.has(evt.id)) continue;
+      prevEventIdsRef.current.add(evt.id);
+      const mappedType = LANE_MAP[evt.vehicle_type];
+      if (!mappedType) continue;
+      next.push({
+        id: evt.id,
+        time: (() => {
+            const parts = evt.id.split('_');
+            const msStr = parts.length > 2 ? parts[parts.length - 1] : String(Date.now());
+            const ms = Number(msStr);
+            return Number.isFinite(ms) ? new Date(ms).toLocaleTimeString('en-GB') : new Date().toLocaleTimeString('en-GB');
+          })(),
+        type: mappedType,
+        direction: evt.direction.toUpperCase() as DirectionType,
+        lane: LANES[Math.floor(Math.random() * LANES.length)],
+        status: `${Math.floor(Math.random() * 35) + 25} km/h`,
+      });
+    }
+    if (next.length) setDetectionLogs((existing) => [...next, ...existing].slice(0, 50));
+  }, []);
+
+  // Sync recent_events from backend when metrics change
+  useEffect(() => {
+    addDetectionLogsFromEvents(metrics.recent_events);
+    prevMetricsRef.current = metrics;
+  }, [metrics, addDetectionLogsFromEvents]);
 
   // Fetch initial ROIs from Backend
   useEffect(() => {
@@ -58,56 +106,6 @@ export default function Dashboard() {
     fetchStreamSource();
   }, [fetchStreamSource]);
 
-  // Generate real-time detection events when breakdown counters increment
-  useEffect(() => {
-    const prev = prevMetricsRef.current;
-    const now = new Date();
-    const timeStr = now.toLocaleTimeString('en-GB');
-    const newEvents: DetectionLogEvent[] = [];
-
-    const types: VehicleType[] = ['motorcycle', 'car', 'bus', 'truck'];
-
-    // Check Inbound deltas
-    types.forEach((type) => {
-      const diff = metrics.inbound.breakdown[type] - prev.inbound.breakdown[type];
-      if (diff > 0) {
-        for (let i = 0; i < Math.min(diff, 5); i++) {
-          newEvents.push({
-            id: `${Date.now()}-in-${type}-${i}`,
-            time: timeStr,
-            type,
-            direction: 'IN',
-            lane: LANES[Math.floor(Math.random() * LANES.length)],
-            status: `${Math.floor(Math.random() * 35) + 25} km/h`,
-          });
-        }
-      }
-    });
-
-    // Check Outbound deltas
-    types.forEach((type) => {
-      const diff = metrics.outbound.breakdown[type] - prev.outbound.breakdown[type];
-      if (diff > 0) {
-        for (let i = 0; i < Math.min(diff, 5); i++) {
-          newEvents.push({
-            id: `${Date.now()}-out-${type}-${i}`,
-            time: timeStr,
-            type,
-            direction: 'OUT',
-            lane: LANES[Math.floor(Math.random() * LANES.length)],
-            status: `${Math.floor(Math.random() * 35) + 25} km/h`,
-          });
-        }
-      }
-    });
-
-    if (newEvents.length > 0) {
-      setDetectionLogs((existing) => [...newEvents, ...existing].slice(0, 50));
-    }
-
-    prevMetricsRef.current = metrics;
-  }, [metrics]);
-
   const handleSelectStreamSource = async (url: string, name: string) => {
     const res = await fetch(`${BACKEND_URL}/api/v1/stream-source`, {
       method: 'POST',
@@ -117,6 +115,8 @@ export default function Dashboard() {
     if (!res.ok) throw new Error(`Failed to switch stream: ${res.status}`);
     fetchStreamSource();
     setStreamKey((prev) => prev + 1);
+    setDetectionLogs([]);
+    prevEventIdsRef.current = new Set();
   };
 
   const handleSaveROI = async (updatedROI: ROICoordinates) => {
@@ -136,6 +136,7 @@ export default function Dashboard() {
     try {
       await fetch(`${BACKEND_URL}/api/v1/reset-counter`, { method: 'POST' });
       setDetectionLogs([]);
+      prevEventIdsRef.current = new Set();
     } catch (err) {
       console.error('Failed to reset counters:', err);
     }

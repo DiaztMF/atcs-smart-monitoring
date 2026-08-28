@@ -1,11 +1,12 @@
-from typing import List, Dict, Any
+from typing import Any, Dict, List, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseSettings):
     PROJECT_NAME: str = "Smart Traffic Monitoring"
     API_V1_STR: str = "/api/v1"
-    CORS_ORIGINS: List[str] = ["*"]
-    
+    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
+    BACKEND_CORS_ALLOW_CREDENTIALS: bool = True
+
     # Video source: Live ATCS Surakarta FLV stream URL (Default: Balai Kota)
     VIDEO_STREAM_URL: str = "https://surakarta.atcsindonesia.info:8086/camera/BalaiKota.flv"
     FALLBACK_VIDEO_PATH: str = "sample_data/synthetic_traffic.mp4"
@@ -18,6 +19,18 @@ class AppSettings(BaseSettings):
     
     # Tracking constants
     TTL_FRAME_PURGE: int = 60
+
+    model_config = SettingsConfigDict(env_prefix="SMART_TRAFFIC_")
+    
+    @classmethod
+    def from_env(cls) -> "AppSettings":
+        import os
+        obj = cls()
+        raw = os.getenv("SMART_TRAFFIC_CORS_ORIGINS")
+        if raw:
+            obj.CORS_ORIGINS = [item.strip() for item in raw.split(",") if item.strip()]
+        return obj
+
 
     # Active Live CCTV Presets (ATCS Surakarta)
     CCTV_PRESETS: List[Dict[str, str]] = [
