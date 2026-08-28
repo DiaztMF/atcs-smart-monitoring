@@ -66,3 +66,25 @@ def test_reset_counter():
     assert res.status_code == 200
     metrics = global_state.get_metrics()
     assert metrics["inbound"]["total_smp"] == 0.0
+
+def test_cors_preflight_and_vercel_origin():
+    # Test preflight OPTIONS request from a Vercel deployment domain
+    headers = {
+        "Origin": "https://atcs-smart-monitoring.vercel.app",
+        "Access-Control-Request-Method": "POST",
+        "Access-Control-Request-Headers": "content-type",
+    }
+    options_res = client.options("/api/v1/roi", headers=headers)
+    assert options_res.status_code == 200
+    assert options_res.headers.get("access-control-allow-origin") == "*"
+    assert "POST" in options_res.headers.get("access-control-allow-methods", "")
+
+    # Test GET /api/v1/roi from Vercel origin
+    get_roi_res = client.get("/api/v1/roi", headers={"Origin": "https://atcs-smart-monitoring.vercel.app"})
+    assert get_roi_res.status_code == 200
+    assert get_roi_res.headers.get("access-control-allow-origin") == "*"
+
+    # Test GET /api/v1/stream-source from Vercel origin
+    get_src_res = client.get("/api/v1/stream-source", headers={"Origin": "https://atcs-smart-monitoring.vercel.app"})
+    assert get_src_res.status_code == 200
+    assert get_src_res.headers.get("access-control-allow-origin") == "*"

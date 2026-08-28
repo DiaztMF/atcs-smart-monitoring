@@ -25,12 +25,22 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# Configure CORS Middleware
+cors_origins = settings.CORS_ORIGINS
+allow_credentials = settings.BACKEND_CORS_ALLOW_CREDENTIALS
+
+# If wildcard "*" is in origins, credentials must be False per Starlette specifications
+if "*" in cors_origins:
+    allow_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=settings.BACKEND_CORS_ALLOW_CREDENTIALS,
+    allow_origins=cors_origins,
+    allow_origin_regex=settings.CORS_ORIGIN_REGEX if "*" not in cors_origins else None,
+    allow_credentials=allow_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 @app.get("/", response_class=HTMLResponse)

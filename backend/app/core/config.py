@@ -1,11 +1,33 @@
-from typing import Any, Dict, List, Optional
+import json
+from typing import Any, Dict, List, Optional, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class AppSettings(BaseSettings):
     PROJECT_NAME: str = "Smart Traffic Monitoring"
     API_V1_STR: str = "/api/v1"
-    CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8000"]
-    BACKEND_CORS_ALLOW_CREDENTIALS: bool = True
+    
+    # CORS Origins: supports "*", list of URLs, or comma-separated string from env
+    CORS_ORIGINS: List[str] = ["*"]
+    CORS_ORIGIN_REGEX: Optional[str] = r"^(https?://.*)$"
+    BACKEND_CORS_ALLOW_CREDENTIALS: bool = False
+
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        if isinstance(v, str):
+            v_stripped = v.strip()
+            if v_stripped == "*":
+                return ["*"]
+            if v_stripped.startswith("[") and v_stripped.endswith("]"):
+                try:
+                    return json.loads(v_stripped)
+                except Exception:
+                    pass
+            return [i.strip() for i in v_stripped.split(",") if i.strip()]
+        elif isinstance(v, (list, tuple)):
+            return [str(i) for i in v]
+        return ["*"]
 
     # Video source: Live ATCS Surakarta FLV stream URL (Default: Balai Kota)
     VIDEO_STREAM_URL: str = "https://surakarta.atcsindonesia.info:8086/camera/BalaiKota.flv"
