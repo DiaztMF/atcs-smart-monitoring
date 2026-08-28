@@ -20,18 +20,6 @@ class AppSettings(BaseSettings):
     # Tracking constants
     TTL_FRAME_PURGE: int = 60
 
-    model_config = SettingsConfigDict(env_prefix="SMART_TRAFFIC_")
-    
-    @classmethod
-    def from_env(cls) -> "AppSettings":
-        import os
-        obj = cls()
-        raw = os.getenv("SMART_TRAFFIC_CORS_ORIGINS")
-        if raw:
-            obj.CORS_ORIGINS = [item.strip() for item in raw.split(",") if item.strip()]
-        return obj
-
-
     # Active Live CCTV Presets (ATCS Surakarta)
     CCTV_PRESETS: List[Dict[str, str]] = [
     {
