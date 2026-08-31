@@ -45,11 +45,18 @@ class AppSettings(BaseSettings):
     # Active Live CCTV Presets (ATCS Surakarta)
     CCTV_PRESETS: List[Dict[str, str]] = [
     {
+        "id": "synthetic_loop",
+        "name": "Mode Demo — Loop Simulasi Lalu Lintas",
+        "location": "Synthetic Traffic Clip (Offline Fallback)",
+        "url": "sample_data/synthetic_traffic.mp4"
+    },
+    {
         "id": "surakarta_cengklik",
         "name": "ATCS Surakarta \u2014 Cengklik",
         "location": "Cengklik, Surakarta",
         "url": "https://surakarta.atcsindonesia.info:8086/camera/Cengklik.flv"
     },
+
     {
         "id": "surakarta_brimob01",
         "name": "ATCS Surakarta \u2014 Brimob 01",
