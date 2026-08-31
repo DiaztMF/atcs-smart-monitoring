@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Video } from 'lucide-react';
+import { Video, RefreshCw, AlertTriangle } from 'lucide-react';
 import { useWebSocket } from '@/hooks/useWebSocket';
 import VideoPlayer from '@/components/VideoPlayer';
 import KPIRow from '@/components/MetricsCard';
@@ -12,9 +12,9 @@ import TrafficChart from '@/components/TrafficChart';
 import LiveFeed from '@/components/LiveFeed';
 import CCTVSelectorModal from '@/components/CCTVSelectorModal';
 import { ROICoordinates, StreamSourceInfo, DetectionLogEvent, VehicleType } from '@/types';
+import { getBackendUrl } from '@/utils/config';
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL || 'ws://localhost:8000/ws/metrics';
+const BACKEND_URL = getBackendUrl();
 
 type DirectionType = 'IN' | 'OUT';
 
@@ -29,7 +29,16 @@ interface VehicleEvent {
 const LANES = ['Jalur 1', 'Jalur 2', 'Jalur 3', 'Jalur Utama'];
 
 export default function Dashboard() {
-  const { metrics, isConnected, error } = useWebSocket(WS_URL);
+  const {
+    metrics,
+    isConnected,
+    error: wsError,
+    reconnectCount,
+    maxRetries,
+    isReconnecting,
+    reconnect: handleReconnect,
+  } = useWebSocket();
+
   const [roi, setROI] = useState<ROICoordinates>({
     inbound: [],
     outbound: [],
@@ -60,11 +69,13 @@ export default function Dashboard() {
       next.push({
         id: evt.id,
         time: (() => {
-            const parts = evt.id.split('_');
-            const msStr = parts.length > 2 ? parts[parts.length - 1] : String(Date.now());
-            const ms = Number(msStr);
-            return Number.isFinite(ms) ? new Date(ms).toLocaleTimeString('en-GB') : new Date().toLocaleTimeString('en-GB');
-          })(),
+          const parts = evt.id.split('_');
+          const msStr = parts.length > 2 ? parts[parts.length - 1] : String(Date.now());
+          const ms = Number(msStr);
+          return Number.isFinite(ms)
+            ? new Date(ms).toLocaleTimeString('en-GB')
+            : new Date().toLocaleTimeString('en-GB');
+        })(),
         type: mappedType,
         direction: evt.direction.toUpperCase() as DirectionType,
         lane: LANES[Math.floor(Math.random() * LANES.length)],
@@ -158,9 +169,8 @@ export default function Dashboard() {
 
   const totalVehicles = inboundTotalCount + outboundTotalCount;
   const totalSMP = metrics.inbound.total_smp + metrics.outbound.total_smp;
-  const greenSplit = totalSMP > 0
-    ? Math.round((metrics.inbound.total_smp / totalSMP) * 100)
-    : 50;
+  const greenSplit =
+    totalSMP > 0 ? Math.round((metrics.inbound.total_smp / totalSMP) * 100) : 50;
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex flex-col font-sans selection:bg-emerald-100 selection:text-emerald-900">
@@ -191,16 +201,38 @@ export default function Dashboard() {
             className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[12px] font-medium border transition-colors ${
               isConnected
                 ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                : isReconnecting
+                ? 'bg-amber-50 text-amber-700 border-amber-200'
                 : 'bg-red-50 text-red-700 border-red-200'
             }`}
           >
             <span
               className={`w-1.5 h-1.5 rounded-full ${
-                isConnected ? 'bg-emerald-500 animate-pulse' : 'bg-red-500'
+                isConnected
+                  ? 'bg-emerald-500 animate-pulse'
+                  : isReconnecting
+                  ? 'bg-amber-500 animate-ping'
+                  : 'bg-red-500'
               }`}
             />
-            {isConnected ? 'WebSocket Terhubung' : 'WebSocket Terputus'}
+            {isConnected
+              ? 'WebSocket Terhubung'
+              : isReconnecting
+              ? `Menghubungkan (${reconnectCount}/${maxRetries})...`
+              : 'WebSocket Terputus'}
           </span>
+
+          {/* Manual Reconnect Button */}
+          {!isConnected && (
+            <button
+              onClick={handleReconnect}
+              className="px-2.5 py-1 rounded-md bg-amber-600 text-white text-[12px] font-medium hover:bg-amber-700 transition-colors flex items-center gap-1 shadow-sm"
+              title="Coba hubungkan kembali ke WebSocket"
+            >
+              <RefreshCw className={`w-3 h-3 ${isReconnecting ? 'animate-spin' : ''}`} />
+              <span>Coba Ulang</span>
+            </button>
+          )}
 
           {/* Switch CCTV Button */}
           <button
@@ -212,6 +244,31 @@ export default function Dashboard() {
           </button>
         </div>
       </header>
+
+      {/* Connection Notification Alert Banner */}
+      {(!isConnected || wsError) && (
+        <div className="mx-6 mt-3 px-4 py-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-center justify-between gap-3 shadow-sm">
+          <div className="flex items-center gap-2 truncate">
+            {isReconnecting ? (
+              <RefreshCw className="w-4 h-4 text-amber-600 animate-spin shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-red-600 shrink-0" />
+            )}
+            <span className="truncate font-medium">
+              {wsError ||
+                (isReconnecting
+                  ? `Mencoba menghubungkan kembali ke WebSocket (${reconnectCount}/${maxRetries}) dalam 5 detik...`
+                  : 'Koneksi ke backend WebSocket terputus. Backend mungkin sedang sleeping / cold start.')}
+            </span>
+          </div>
+          <button
+            onClick={handleReconnect}
+            className="px-3 py-1 bg-amber-600 hover:bg-amber-700 text-white text-[11px] font-semibold rounded transition-colors shadow-sm shrink-0"
+          >
+            Hubungkan Ulang
+          </button>
+        </div>
+      )}
 
       {/* Top 4 KPI Cards */}
       <div className="px-6 pt-4 shrink-0">
@@ -248,10 +305,7 @@ export default function Dashboard() {
           />
 
           {/* Adaptive Signal Split Widget */}
-          <AdaptiveSignalSplit
-            greenSplit={greenSplit}
-            cycleTimeSeconds={90}
-          />
+          <AdaptiveSignalSplit greenSplit={greenSplit} cycleTimeSeconds={90} />
         </div>
 
         {/* Right Column (5 Cols) */}
